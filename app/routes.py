@@ -1,13 +1,15 @@
 import logging
+from datetime import datetime
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi import Request
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.responses import JSONResponse
 from starlette.status import HTTP_422_UNPROCESSABLE_ENTITY
-from datetime import datetime
+
 from bot.bot import send_to_managers
 from bot.services import broadcaster
 
@@ -17,7 +19,23 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4000  # запас от 4096
 
 class Lead(BaseModel):
     name: str
-    phone: str
+    contactMethod: Literal["telegram", "email", "phone"]
+    contactValue: str
+    message: str = ""
+
+    @field_validator("contactValue")
+    def validate_contact_value(cls, value, info):
+        method = info.data.get("contactMethod")
+        if method == "email":
+            if "@" not in value or "." not in value:
+                raise ValueError("Неверный Email")
+        elif method == "phone":
+            if not value.startswith("+7") or len(value) != 12:
+                raise ValueError("Неверный номер телефона")
+        elif method == "telegram":
+            if len(value) < 2:
+                raise ValueError("Неверный Telegram username")
+        return value
 
 
 # Функция получения IP из заголовка или request.client
@@ -48,29 +66,57 @@ def register_routes(app: FastAPI):
         lead_date = datetime.now()
         logger.info(f"Пришла заявка {lead.name} {lead.phone}, {lead_date}")
         client_ip = get_real_ip(request)
-        # 🔐 Базовая ручная проверка на случай обхода валидации
-        if not lead.name.strip() or len(lead.phone) != 12:
-            logger.warning(f"[{client_ip}] ❌ Некорректные данные: name='{lead.name}' phone='{lead.phone}'")
-            raise HTTPException(
-                status_code=HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Invalid data"
-            )
-
         logger.info(f"[{client_ip}] 📩 Заявка: {lead.name} / {lead.phone}")
+
+        logger.info((
+            f"📥 Заявка от {client_ip} | Время: {lead_date}"
+            f"Имя: {lead.name}"
+            f"Способ связи: {lead.contactMethod}"
+            f"Контакт: {lead.contactValue}"
+            f"Сообщение: {lead.message}"))
 
         try:
             if lead.phone == "+79999999999" and lead.name.upper() == "проверка".upper():
                 await broadcaster.broadcast(
                     bot, admin_ids,
-                    text = f"📥 <b>Новая проверочная заявка</b>\n👤 Имя: {lead.name}\n📞 Телефон: {lead.phone}")
+                    text=(
+                        f"📥 <b>Новая проверочная заявка</b>\n"
+                        f"👤 <b>Имя:</b> {lead.name}\n"
+                        f"📡 <b>Способ связи:</b> {lead.contactMethod}\n"
+                        f"📲 <b>Контакт:</b> {lead.contactValue}\n"
+                        f"💬 <b>Сообщение:</b> {lead.message or '—'}"
+                    ))
             else:
-                await send_to_managers(lead.name, lead.phone, bot=bot, manager_ids=manager_ids)
+                await send_to_managers(
+                    text=(
+                        f"📥 <b>Новая заявка</b>\n"
+                        f"👤 <b>Имя:</b> {lead.name}\n"
+                        f"📡 <b>Способ связи:</b> {lead.contactMethod}\n"
+                        f"📲 <b>Контакт:</b> {lead.contactValue}\n"
+                        f"💬 <b>Сообщение:</b> {lead.message or '—'}"
+                    ), bot=bot, manager_ids=manager_ids)
         except Exception as e:
             error_message = f"[{client_ip}] ❗ Ошибка при отправке заявки: {str(e)}"
+            logger.exception(f"Ошибка: {e}", exc_info=True)
             await handle_error_report(error_message, bot, admin_ids)
             raise HTTPException(status_code=500, detail="Failed to process request")
 
         return {"status": "ok"}
+        #
+        # lead_date = datetime.now()
+        # client_ip = request.client.host  # или свой get_real_ip()
+        #
+        # # Пример логирования
+        # print(f"[{client_ip}] Новая заявка: {lead.name} через {lead.contactMethod}: {lead.contactValue}")
+        #
+        # # Пример отправки данных дальше:
+        # try:
+        #     await send_to_managers(lead.name, lead.contactValue)
+        # except Exception as e:
+        #     print(f"Ошибка: {e}")
+        #     raise HTTPException(status_code=500, detail="Ошибка отправки")
+        #
+        # return {"status": "ok"}
 
     async def handle_error_report(error_message: str, bot, admin_ids: list[str]):
         logger.error(f"📩 Получена ошибка: {error_message}", exc_info=True)
