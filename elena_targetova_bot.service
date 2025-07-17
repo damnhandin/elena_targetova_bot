@@ -1,0 +1,18 @@
+[Unit]
+Description=elena_targetova Bot Microservice
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/home/elena_targetova_bot
+ExecStart=/usr/bin/docker compose up --build
+ExecStop=/usr/bin/docker compose down
+Restart=always
+EnvironmentFile=/home/elena_targetova_bot/.env
+TimeoutStartSec=0
+StandardOutput=journal
+StandardError=journal
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target
