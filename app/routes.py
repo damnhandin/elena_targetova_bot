@@ -64,9 +64,9 @@ def register_routes(app: FastAPI):
     @limiter.limit("3/5minutes")
     async def submit_lead(lead: Lead, request: Request):
         lead_date = datetime.now()
-        logger.info(f"Пришла заявка {lead.name} {lead.phone}, {lead_date}")
+        logger.info(f"Пришла заявка {lead.name} {lead.contactValue}, {lead_date}")
         client_ip = get_real_ip(request)
-        logger.info(f"[{client_ip}] 📩 Заявка: {lead.name} / {lead.phone}")
+        logger.info(f"[{client_ip}] 📩 Заявка: {lead.name} / {lead.contactValue}")
 
         logger.info((
             f"📥 Заявка от {client_ip} | Время: {lead_date}"
@@ -76,7 +76,7 @@ def register_routes(app: FastAPI):
             f"Сообщение: {lead.message}"))
 
         try:
-            if lead.phone == "+79999999999" and lead.name.upper() == "проверка".upper():
+            if lead.name.upper() == "проверка".upper():
                 await broadcaster.broadcast(
                     bot, admin_ids,
                     text=(
